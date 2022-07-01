@@ -37,7 +37,6 @@ weatherDf <- as.data.frame(fromJSON(content))
 View(weatherDf)
 
 
-
 #3.Napisz funckję zapisującą porcjami danych plik csv do tabeli  w SQLite
 
 
@@ -48,11 +47,9 @@ install.packages("RSQLite")
 library(DBI)
 library(RSQLite)
 
-
-
-?read.table
-?file
-?dbWriteTable
+#?read.table
+#?file
+#?dbWriteTable
 
 # 
 # i <- 0
@@ -97,8 +94,6 @@ repeat {
   print(nrow(df1))
 }
 
-
-
 View(df1)
 
 
@@ -134,16 +129,95 @@ filepath = "autaSmall.csv"
 
 readToBase(filepath, dbConn, "auta2", 1000)
 
+# 3a. Napisz funkcję zapisującą porcjami danych plik csv do tabeli w SQLite
+# Utworzenie bazy na podstawie pliku auta2.csv - 3.2GB
+
+install.packages("DBI")
+install.packages("RSQLite")
+library(DBI)
+library(RSQLite)
+
+con <- dbConnect(SQLite(), "auta2.sqlite")
+
+readToBase<-function(filepath,con,tablename,size=100, sep=",",header=TRUE,delete=TRUE, encoding="UTF-8"){
+  ap = !delete
+  ov = delete
+  
+  fileCon <- file(description=filepath, open = "r", encoding = encoding)
+  
+  df1 <- read.table(fileCon, header = TRUE, sep=sep, fill=TRUE,
+                    fileEncoding = encoding, nrows = size)
+  if( nrow(df1)==0)
+    return(0)
+  myColNames <- names(df1)
+  dbWriteTable(con, tablename, df1, append=ap, overwrite=ov)
+  # zapis do bazy
+  repeat{
+    if(nrow(df1)==0){
+      close(fileCon)
+      dbDisconnect(con)
+      break;
+    }
+    df1 <- read.table(fileCon, col.names = myColNames, sep=sep,
+                      fileEncoding = encoding, nrows = size)
+    dbWriteTable(con, tablename, df1, append=TRUE, overwrite=FALSE)
+  }
+}
+
+readToBase("auta2.csv", con, "auta2", 1000)
+
 
 #4.Napisz funkcję znajdującą tydzień obserwacji z największą średnią ceną ofert korzystając z zapytania SQL.
 
 dbConn <- dbConnect(SQLite(), "auta.sqlite")
-res <- dbSendQuery(dbConn, "SELECT * FROM auta2")
+res <- dbSendQuery(dbConn, "SELECT tydzien, avg_week_price 
+          FROM 
+          (
+            SELECT tydzien, AVG(cena) as avg_week_price 
+            FROM auta2
+            GROUP BY tydzien
+          ) 
+          WHERE avg_week_price=(SELECT  max(avg_week_price) 
+                        FROM (select tydzien, AVG(cena) as avg_week_price 
+                              FROM auta2 GROUP BY tydzien))")
 df_z_bazy <- dbFetch(res)
-df_z_bazy
+print(df_z_bazy)
 dbClearResult(res)
 dbDisconnect(dbConn)
 
 #5. Podobnie jak w poprzednim zadaniu napisz funkcję znajdującą tydzień obserwacji z największą średnią ceną ofert  tym razem wykorzystując REST api.
 
 #    http://54.37.136.190:8000/__docs__/
+
+library(httr)
+library(jsonlite)
+
+url <- "http://54.37.136.190:8000/week?t="
+df_weeks_avg_price = NULL
+i = 0
+repeat
+{
+  i <- i + 1 
+  page <- i
+  week_url <- paste(url, page, sep="")
+  getWeek <- GET(week_url)
+  getWeek_text <- content(getWeek, "text")
+  getWeek_json <- fromJSON(getWeek_text, flatten = TRUE)
+  getWeek_df <- as.data.frame(getWeek_json)
+  getWeek_avg_price <- mean(getWeek_df$cena, na.rm = TRUE)
+  print(getWeek_avg_price)
+  if(getWeek_avg_price == 0) {
+    break;
+  }
+  df_weeks_avg_price = rbind(df_weeks_avg_price, data.frame(page, getWeek_avg_price))
+}
+
+getWeek_max_avg_price <- subset(df_weeks_avg_price, df_weeks_avg_price$getWeek_avg_price == max(df_weeks_avg_price$getWeek_avg_price))
+View(getWeek_max_avg_price)
+
+write.csv(df_weeks_avg_price,"df_weeks_avg_price.csv", row.names = FALSE)
+
+
+
+
+
